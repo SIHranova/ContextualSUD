@@ -8,7 +8,7 @@ from itertools import product
 from matplotlib.ticker import MultipleLocator
 from scipy.optimize import curve_fit
 from concurrent.futures import ProcessPoolExecutor
-
+from scipy import stats
 np.seterr(divide='ignore', invalid='ignore')
 np.seterr(over='ignore', invalid='ignore')
 
@@ -65,7 +65,7 @@ class Agent():
 		
 		if self.learn_state_transitions:
 			self.transition_counts = np.ones([self.TAU,self.T, len(self.transitions_to_learn), self.ns, self.nc])
-		
+			self.transition_counts[:,:,0,self.state_mapping["magazine_full_O1"]:self.state_mapping["initial_state"],:] = 20
 		self.latest_transition_counts = self.transition_counts[0,0,:,:,:]
 	
 		self.context_transition_matrix = context_transition_matrix
@@ -409,10 +409,12 @@ class Agent():
 			
 		if tau < self.TAU - 1 and self.debug:
 			print(f"--------------------\ntau,t: {tau,t}")
-			print(f"action: {self.get_key(self.action_mapping, action)},\
-				    observation: {self.get_key(self.state_mapping, observation)},\
-				    reward: {self.get_key(self.reward_mapping, reward)}")
-				   
+			print(f"action: {self.get_key(self.action_mapping, action)},\n\
+				    observation: {self.get_key(self.state_mapping, observation)},\n\
+					magazine curr: {self.environment.magazine_state[tau,t]},\n\
+				    reward: {self.get_key(self.reward_mapping, reward)},\n\
+					reinforcement: {bool(self.environment.reinforcement[tau,t])},\n\
+					magazine next: {self.environment.magazine_state[tau,t+1]}")
 			# print(self.env.magazine_state)
 
 			print(f"\nq(R|pi,c); policy likelihood:")
@@ -501,8 +503,9 @@ class MultiArmedBandit():
 		self.nb = n_bandits
 		self.nb = n_bandits
 
-		self.reinforcement = np.zeros(TAU)
-		self.magazine_state = np.ones([TAU,T], dtype=int)*self.reward_mapping["no_reward"]
+		self.reinforcement = np.zeros([TAU,T])
+		self.magazine_state = np.ones([TAU,T+1], dtype=int)*self.reward_mapping["no_reward"]
+		self.magazine_state[:,-1] = -1
 
 		if observation_generation_matrix is None:
 			self.observation_generation_matrix = np.eye(self.ns)
@@ -522,17 +525,40 @@ class MultiArmedBandit():
 			# distribute initial state reward
 			self.rewards[tau,t] = reward
 		else:
-			try:
-				# load magazine for next trial without overwriting potential noncontingent outcome
-				if reward != self.reward_mapping["no_reward"]:
-					self.magazine_state[tau,t+1] = reward
-			except:
-				# ignore if this was last decision point
-				pass
+		
+			regime = self.training_protocol[tau]
+			if regime == 0:
+				self.reinforcement[tau,t] = np.random.uniform() <= self.rho_noncontingent
+				noncontingent_reward = self.reward_mapping["outcome_2"] if self.reinforcement[tau,t] == 1 else self.reward_mapping["no_reward"] #if np.random.uniform() < self.rho_noncontingent else self.reward_mapping["no_reward"]
+				if self.reinforcement[tau,t] == 1:
+					a=0
+			else:
+				noncontingent_reward = self.reward_mapping["no_reward"]
+
+			# load magazine for next trial as a consequence of state reward contingencies Rho
+			# try:
+			if reward != self.reward_mapping["no_reward"]:
+				self.magazine_state[tau,t+1] = reward
+			
+			if noncontingent_reward != self.reward_mapping["no_reward"]:
+				self.magazine_state[tau,t+1] = noncontingent_reward
+				
+			# except:
+			# 	# ignore if this was last decision point
+			# 	pass
+			
+			# # generate non-contigent reinforcement at last trial
+			# if t == self.T-1 and np.random.uniform() < self.rho_noncontingent:
+			# 	self.magazine_state[tau,t] = self.reward_mapping["outcome_2"]
+			# 	# print("tau,t: ", tau,t)
+			# 	# print("loaded magazine: ", self.magazine_state[tau,t])
 
 			# if entering magazine get available reward, if not, receive no reward
 			if action == self.action_mapping["magazine_entry"]:
 				self.rewards[tau,t] = self.magazine_state[tau,t]
+				# print("tau,t: ", tau,t)
+				# print(self.magazine_state[tau,t])
+				# print(self.rewards[tau,t])
 			else:
 				self.rewards[tau,t] = self.reward_mapping["no_reward"]
 
@@ -542,13 +568,13 @@ class MultiArmedBandit():
 		return self.rewards[tau,t]
 
 
-	def noncontingent_reinforcement(self,tau):
-		regime = self.training_protocol[tau]
-		if regime == 0:
-			self.reinforcement[tau] = np.random.uniform() <= self.rho_noncontingent
+	# def noncontingent_reinforcement(self,tau):
+	# 	regime = self.training_protocol[tau]
+	# 	if regime == 0:
+	# 		self.reinforcement[tau] = np.random.uniform() <= self.rho_noncontingent
 
-			if self.reinforcement[tau] == 1:
-				self.magazine_state[tau,self.T-1] = self.reward_mapping["outcome_2"]
+	# 		if self.reinforcement[tau] == 1:
+	# 			self.magazine_state[tau,self.T-1] = self.reward_mapping["outcome_2"]
 
 
 	def sample_hidden_state(self, t, tau, action):
@@ -556,8 +582,12 @@ class MultiArmedBandit():
 
 		if action == self.action_mapping["magazine_entry"]:
 			if self.magazine_state[tau,t] == self.reward_mapping["outcome_1"]:
+			# if self.rewards[tau,t] == self.reward_mapping["outcome_1"]:
+
 				B = self.B_magazine_full_O1
 			elif self.magazine_state[tau,t] == self.reward_mapping["outcome_2"]:
+			# elif self.rewards[tau,t] == self.reward_mapping["outcome_2"]:
+
 				B = self.B_magazine_full_O2
 			else:
 				B = self.B_magazine_empty
@@ -630,7 +660,7 @@ class World():
 				if t == 0:
 					action=None
 					state = self.environment.initialize_hidden_state(tau)
-					self.environment.noncontingent_reinforcement(tau)
+					# self.environment.noncontingent_reinforcement(tau)
 				else:
 					state = self.environment.sample_hidden_state(t, tau, action)
 
@@ -798,8 +828,8 @@ def create_dataframe(TAU,T,pars, world):
 		sim_arr = np.full(TAU*T,pars["sim"])
 		true_context = np.array(world.environment.training_protocol).repeat(T)
 		block_arr = np.arange(pars["n_blocks_extinction"]+pars["n_blocks_train"]).repeat(pars["block_length"]*T)
-		reinforcement_arr = world.environment.reinforcement.repeat(T)
-		magazine_state_arr = world.environment.magazine_state.flatten()
+		reinforcement_arr = world.environment.reinforcement.flatten()
+		magazine_state_arr = world.environment.magazine_state[:,:T].flatten()
 		# Policy arrays
 		prior_arr = {}
 		likelihood_arr = {}
@@ -868,23 +898,34 @@ def run_simulation_parallel(p):
 
 
 def plot_results(pars, dataframe, matrices, training_protocol):
-	fig, axes = plt.subplots(1,5,figsize=(16,3))
+	action_labels = pars["action_legend_labels"]
+	state_labels = pars["state_legend_labels"]
+	reward_labels = pars["reward_legend_labels"]
+	n_blocks_extinction = pars["n_blocks_extinction"]
+	n_blocks_train = pars["n_blocks_train"]
 
-	sns.heatmap(ax=axes[0], data=pars["Rho"][:,:,0], annot=True, cmap="gray")
-	sns.heatmap(ax=axes[1], data=pars["Rho"][:,:,1], annot=True, cmap="gray")
+	fig, axes = plt.subplots(1,5,figsize=(24,3))
 
-	sns.heatmap(np.array(pars["utility_1"])[training_protocol,:].T, cmap="gray",ax=axes[2])
-	sns.heatmap(np.array(pars["utility_2"])[training_protocol,:].T, cmap="gray",ax=axes[3])
+	g = sns.heatmap(ax=axes[0], data=pars["Rho"][:,:,0], annot=True, cmap="gray")
+	g.yaxis.set_ticklabels(reward_labels, rotation=45)
+	g.xaxis.set_ticklabels(state_labels, rotation=45)
+	g = sns.heatmap(ax=axes[1], data=pars["Rho"][:,:,1], annot=True, cmap="gray")
+	g.yaxis.set_ticklabels(reward_labels, rotation=45)
+	g.xaxis.set_ticklabels(state_labels, rotation=45)
 
+	g = sns.heatmap(np.array(pars["utility_1"])[training_protocol,:].T, cmap="gray",ax=axes[2])
+	g.yaxis.set_ticklabels(reward_labels[:-1], rotation=45)
+	g = sns.heatmap(np.array(pars["utility_2"])[training_protocol,:].T, cmap="gray",ax=axes[3])
+	g.yaxis.set_ticklabels(reward_labels[:-1], rotation=45)
 
-	sns.lineplot(ax=axes[4], x=np.arange(pars["n_blocks_train"] + pars["n_blocks_extinction"])+1,y=[0]*pars["n_blocks_train"] + [1]*pars["n_blocks_extinction"],marker="o")
+	g = sns.lineplot(ax=axes[4], x=np.arange(pars["n_blocks_train"] + pars["n_blocks_extinction"])+1,y=[0]*pars["n_blocks_train"] + [1]*pars["n_blocks_extinction"],marker="o")
 	axes[4].xaxis.set_major_locator(MultipleLocator(1))
 	axes[4].yaxis.set_major_locator(MultipleLocator(1))
 
 	for ax, title in zip(axes, ["p(outcome|state) Training","p(outcome|state) Degradation", "Utility Group 1", "Utility Group 2", "Block Type"]):
 		ax.set_title(title)
 
-	##################################################
+	# ##################################################
 	# Policy labels
 	action_labels = pars["action_legend_labels"]
 	policy_mapping = []
@@ -893,54 +934,82 @@ def plot_results(pars, dataframe, matrices, training_protocol):
 		for j in range(pars["na"]):
 			policy_mapping.append(f"{action_labels[i]}, {action_labels[j]}")
 
-	"""	Policy execution in each block for whole experiment """
-	df = dataframe.copy()
-	df = df.groupby(["experimental_group","sim","block"])["policy"].value_counts().reset_index()
+	# """	Policy execution in each block for whole experiment """
+	# df = dataframe.copy()
+	# df = df.groupby(["experimental_group","sim","block"])["policy"].value_counts().reset_index()
 	
-	plt.figure(figsize=(12,4))
-	for group in [0,1]:
-		plt.subplot(1,2,group+1)
-		g = sns.pointplot(data=df.query(f"experimental_group == {group}"), x="block", y="count", hue="policy", palette="tab10", errorbar="se")
-		g.legend(handles=g.get_legend_handles_labels()[0], labels=policy_mapping, bbox_to_anchor=(1.05,0.7))
-	plt.subplots_adjust(wspace=0.5)
+	# plt.figure(figsize=(12,4))
+	# for group in [0,1]:
+	# 	plt.subplot(1,2,group+1)
+	# 	g = sns.pointplot(data=df.query(f"experimental_group == {group}"), x="block", y="count", hue="policy", palette="tab10", errorbar="se")
+	# 	g.legend(handles=g.get_legend_handles_labels()[0], labels=policy_mapping, bbox_to_anchor=(1.05,0.9),fontsize=14)
+	# 	g.set_ylabel("Policy Frequency",fontsize=14)
+	# 	g.set_xticks(np.arange(0,n_blocks_extinction+n_blocks_train,3))
+	# 	g.set_title(f"Group where O{(group==0)+1} devalued",fontsize=14)
+	# 	if group == 0:
+	# 		g.get_legend().remove()
+	# plt.subplots_adjust(wspace=0.5)
 
 
 	""""    Relative policy execution in two groups"""
 	df = dataframe.copy()
 	df = df.groupby(["experimental_group","sim","phase"])["policy"].value_counts(normalize=True)
 	relative_policy_frequency = (df.loc[:, :, "extinction",:] / df.loc[:, :, "training",:]).reset_index()
-	# relative_policy_frequency
 	plt.figure()
 	g = sns.barplot(data=relative_policy_frequency, x="policy", y="proportion", hue="experimental_group", errorbar="se", alpha=0.3)
 	# sns.stripplot(data=relative_policy_frequency, x="policy", y="proportion", hue="experimental_group", alpha=0.7)
-	g.xaxis.set_ticklabels(policy_mapping, rotation=45)
+	g.set_ylabel("Relative lever press (training/execution)",fontsize=14)
+	g.legend(handles=g.get_legend_handles_labels()[0], labels=["O2 devalued","O1 devalued"], bbox_to_anchor=(1.05,0.7),fontsize=14)
+	g.xaxis.set_ticklabels(policy_mapping, rotation=45,fontsize=14)
+
+	x = relative_policy_frequency.reset_index().query("policy == 2")
+
+	g1, g2 = [x.loc[x.experimental_group == g, "proportion"].dropna()
+			for g in x.experimental_group.unique()]
+
+	# Shapiro-Wilk normality tests
+	normal = all(stats.shapiro(g)[1] > .05 for g in [g1, g2])
+
+	if normal:
+		stat, p_val = stats.ttest_ind(g1, g2, equal_var=False)  # Welch's t-test
+		title = f"Welch's t-test: t = {stat:.3f}, p_val = {p_val:.4f}"
+	else:
+		stat, p_val = stats.mannwhitneyu(g1, g2, alternative="two-sided")
+		title = f"Mann-Whitney U: U = {stat:.3f}, p_val = {p_val:.4f}"
+
+	plt.title(title, fontsize=14)
+
+	# """     Inferred posterior over contexts """
+
+	# df = dataframe.copy()
+	# plt.figure(figsize=(10,4))
+	# for group in [0,1]:
+	# 	plt.subplot(1,2,group+1)
+	# 	g = sns.lineplot(data=df.query("experimental_group == 0"), x="tau", y="posterior_context_c0", errorbar="sd")
+	# 	g = sns.lineplot(data=df.query("experimental_group == 0"), x="tau", y="posterior_context_c1", errorbar="sd")
+	# 	g.set_ylabel("Posterior Context",fontsize=14)
+	# 	g.set_title(f"Group where O{(group==0)+1} devalued",fontsize=14)
 
 
-	"""     Inferred posterior over contexts """
+	# """      Learned reward distribution     """
+	# plt.figure()
+	# g = sns.heatmap(data=matrices["reward_generation_matrix"], annot=True, cmap="gray", fmt=".3f")
+	# # g.set_xlabel.ticklabels(["L","~L","Magazine\nempty","Magazine\nFull","IS"])
+	# g.yaxis.set_ticklabels(pars["reward_legend_labels"], rotation=45,fontsize=14)
+	# g.xaxis.set_ticklabels(pars["state_legend_labels"], rotation=45,fontsize=14)
+	# g.set_title("Learned reward distribution",fontsize=14)
 
-	df = dataframe.copy()
-	plt.figure()
-	sns.lineplot(data=df, x="tau", y="posterior_context_c0", hue="experimental_group", errorbar="sd")
-	sns.lineplot(data=df, x="tau", y="posterior_context_c1", hue="experimental_group", errorbar="sd")
+	# """     Learned state transition       	"""
+	# plt.figure()
+	# g = sns.heatmap(matrices["state_transition_matrix"], annot=True, cmap="gray", fmt=".3f")
+	# # g.set_xlabel.ticklabels(["L","~L","Magazine\nempty","Magazine\nFull","IS"])
+	# # g.yaxis.set_ticklabels(["O1","O2","no\nreward", "starting state\nreward"], rotation=45)
+	# g.xaxis.set_ticklabels(pars["state_legend_labels"],rotation=45,fontsize=14)
+	# g.yaxis.set_ticklabels(pars["state_legend_labels"],rotation=45,fontsize=14)
+	# g.set_title("Learned state transition after\n performing action 'Magazine Entry'",fontsize=14)
 
-	"""      Learned reward distribution     """
-	plt.figure()
-	g = sns.heatmap(data=matrices["reward_generation_matrix"], annot=True, cmap="gray", fmt=".3f")
-	# g.set_xlabel.ticklabels(["L","~L","Magazine\nempty","Magazine\nFull","IS"])
-	g.yaxis.set_ticklabels(pars["reward_legend_labels"], rotation=45)
-	g.xaxis.set_ticklabels(pars["state_legend_labels"], rotation=45)
-
-	"""     Learned state transition       	"""
-	plt.figure()
-	g = sns.heatmap(matrices["state_transition_matrix"], annot=True, cmap="gray", fmt=".3f")
-	# g.set_xlabel.ticklabels(["L","~L","Magazine\nempty","Magazine\nFull","IS"])
-	# g.yaxis.set_ticklabels(["O1","O2","no\nreward", "starting state\nreward"], rotation=45)
-	g.xaxis.set_ticklabels(pars["state_legend_labels"],rotation=45)
-	g.yaxis.set_ticklabels(pars["state_legend_labels"],rotation=45)
-
-
-	"""  Gathered rewards  """
-	df = dataframe.groupby(by=["sim", "phase", "t"])["reward"].value_counts().reset_index()
-	plt.figure()
-	g = sns.barplot(data=df.query("phase=='training'"), x="t", y="count", hue="reward")
-	g.legend(handles=g.get_legend_handles_labels()[0], labels=pars["reward_legend_labels"], bbox_to_anchor=(1.05,0.7))
+	# """  Gathered rewards  """
+	# df = dataframe.groupby(by=["sim", "phase", "t"])["reward"].value_counts().reset_index()
+	# plt.figure()
+	# g = sns.barplot(data=df.query("phase=='training'"), x="t", y="count", hue="reward")
+	# g.legend(handles=g.get_legend_handles_labels()[0], labels=pars["reward_legend_labels"], bbox_to_anchor=(1.05,0.7),fontsize=14)
