@@ -84,9 +84,6 @@ def run_simulation(h=1000,
     context_transition_matrix = np.eye(nc)*(1-nc*q) + q
     assert(np.all(context_transition_matrix.sum(axis=0) == 1))
 
-    # print(Rho)
-    # print(Rho.shape)
-
     if Rho.shape[-1] == TAU:
         trial_Rho = Rho
     elif Rho.shape[-1] == nc:
