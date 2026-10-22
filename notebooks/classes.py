@@ -106,7 +106,9 @@ class Agent():
 			if not prior_color_cue is None:
 				self.prior_color_cue = np.zeros([self.TAU, self.T] + list(prior_color_cue.shape))
 				self.prior_color_cue[:,:,:,:] = (prior_color_cue / prior_color_cue.sum(axis=0))[None,None,:,:]
-
+			else:
+				self.prior_color_cue = None
+				
 		self.background_color_surprise = np.zeros([self.TAU, self.T, self.nc])
 		self.observation_generation_matrix = observation_generation_matrix
 

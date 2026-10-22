@@ -34,10 +34,8 @@ def plot_reward_regime(k_range, switch=100, TAU=400, start=0.9, stop=0.1,dpi=100
 
 
 def run_simulation(h=1000,
-                   n_train=20,
-                   n_extinction=5,
                    na=3,
-                   nb=2,
+                   npi=None,
                    ns=3,
                    nr=4,
                    nc=2,
@@ -54,7 +52,9 @@ def run_simulation(h=1000,
                    reward_mapping={"outcome_1": 0, "outcome_2": 1, "no_reward": 2, "initial_state": 3},
                    action_mapping={"lever_press": 0, "no_lever_press": 1},
                    training_protocol=None,
-                   changing_rewards=False,
+                   learn_cues = False,
+                   prior_color_cue = None,
+                   color_cue_context_mapping = None,
                    **pars):
 
     npi = na**(T-1)
@@ -93,15 +93,16 @@ def run_simulation(h=1000,
 
     env = MultiArmedBandit(state_transition_matrix,
                            trial_Rho,
-                           TAU=TAU,
-                           T=T,
-                           n_bandits=na,
-                           training_protocol=training_protocol,
+                           TAU=TAU, 
+                           T=T, 
+                           n_bandits=na, 
+                           training_protocol=training_protocol, 
                            observation_generation_matrix=observation_generation_matrix,
-                           no=ns,
-                           rho_noncontingent=rho_noncontingent,
-                           reward_mapping=reward_mapping,
-                           action_mapping=action_mapping)
+                           no=ns, 
+                           rho_noncontingent=rho_noncontingent, 
+                           reward_mapping=reward_mapping, 
+                           action_mapping=action_mapping,
+                           color_cue_context_mapping=color_cue_context_mapping)
 
     agent = Agent(state_transition_matrix,
                   utility,
@@ -120,7 +121,9 @@ def run_simulation(h=1000,
                   observation_generation_matrix=observation_generation_matrix,
                   debug=debug,
                   context_transition_matrix=context_transition_matrix,
-                  habit_exception=habit_exception)
+                  habit_exception=habit_exception,
+                  learn_cues=learn_cues,
+                  prior_color_cue=prior_color_cue)
 
     world = World(agent, env)
     world.agent.context_volatility = context_volatility
