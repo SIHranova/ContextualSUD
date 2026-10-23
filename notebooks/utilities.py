@@ -55,6 +55,7 @@ def run_simulation(h=1000,
                    learn_cues = False,
                    prior_color_cue = None,
                    color_cue_context_mapping = None,
+                   bias = 0,
                    **pars):
 
     npi = na**(T-1)
@@ -67,7 +68,7 @@ def run_simulation(h=1000,
 
     observation_generation_matrix = np.eye(ns)
 
-    lambda_H = np.ones([nr,ns])
+    lambda_H = np.ones([nr,ns]) + bias
     lambda_H[-1,-1] = 100
     counts_prior_rewards = np.stack([lambda_H for i in range(nc)],axis=-1)
     counts_prior_rewards += np.random.uniform(low=0,high=0.2, size = counts_prior_rewards.shape)
@@ -134,6 +135,7 @@ def run_simulation(h=1000,
     policy_prior_matrix = world.agent.prior_policies[-1, -1, :, :]
 
     return world, prior_rewards_matrix, policy_prior_matrix
+
 
 def fit_posterior_traces(q_context, q_action, switch, TAU):
     """Fit sigmoid/exponential functions to context and policy posterior traces."""
