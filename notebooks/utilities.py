@@ -124,7 +124,8 @@ def run_simulation(h=1000,
                   context_transition_matrix=context_transition_matrix,
                   habit_exception=habit_exception,
                   learn_cues=learn_cues,
-                  prior_color_cue=prior_color_cue)
+                  prior_color_cue=prior_color_cue,
+                  dec_temp = pars["dec_temp"])
 
     world = World(agent, env)
     world.agent.context_volatility = context_volatility
